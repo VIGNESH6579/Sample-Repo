@@ -71,30 +71,45 @@ def check_stock(sym, prev_day_bars):
     except Exception as e:
         logger.error(f"Error checking {sym}: {e}")
 
-def main():
-    logger.info("Starting NSE Live Signal Engine...")
-    send_alert("NSE Scalper Engine Started. Monitoring F&O Universe.", tags="white_check_mark")
+def get_top_movers():
+    logger.info("Refreshing Top 10 Gainers and Losers...")
+    quotes = fetch_live_quotes(FO_STOCKS)
+    if quotes.empty: return FO_STOCKS
     
-    # Pre-fetch previous day data for pivots
+    quotes['change'] = (quotes['price'] - quotes['open']) / quotes['open']
+    sorted_q = quotes.sort_values('change')
+    top_losers = sorted_q.head(10)['symbol'].tolist()
+    top_gainers = sorted_q.tail(10)['symbol'].tolist()
+    return list(set(top_gainers + top_losers))
+
+def main():
+    logger.info("Starting NSE Live Signal Engine (Momentum Focus)...")
+    send_alert("NSE Scalper Engine Started. Focusing on Top 10 Gainers/Losers.", tags="fire")
+    
     prev_data = {}
+    # Initial pivot fetch
     for sym in FO_STOCKS:
         try:
             df = get_intraday_bars(sym, interval="1d", range="5d")
-            if not df.empty:
-                prev_data[sym] = df.iloc[-2] # Second to last is previous day
-        except:
-            continue
+            if not df.empty: prev_data[sym] = df.iloc[-2]
+        except: continue
+    
+    last_refresh = 0
+    targets = FO_STOCKS
     
     while True:
-        # Only run during market hours (9:15 - 15:30 IST)
-        # For now, we run continuously for testing
-        for sym in FO_STOCKS:
+        # Refresh Top Movers every 15 minutes
+        if time.time() - last_refresh > 900:
+            targets = get_top_movers()
+            last_refresh = time.time()
+            logger.info(f"Monitoring Targets: {', '.join(targets)}")
+        
+        for sym in targets:
             if sym in prev_data:
                 check_stock(sym, prev_data[sym])
-            time.sleep(0.5) # Avoid rate limiting
+            time.sleep(1)
         
-        logger.info("Cycle complete. Waiting 5 minutes...")
-        time.sleep(300)
+        time.sleep(60)
 
 if __name__ == "__main__":
     main()
