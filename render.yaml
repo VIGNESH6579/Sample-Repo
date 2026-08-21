@@ -1,0 +1,11 @@
+services:
+  - type: worker
+    name: nse-scalper-engine
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python engine.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: NTFY_TOPIC
+        sync: false

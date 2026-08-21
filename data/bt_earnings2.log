@@ -1,0 +1,6 @@
+nohup: ignoring input
+stocks with earnings windows: 90
+
+=== Earnings-event vs random baseline (same pullback logic) ===
+--- EVENT (earnings window): n=13, WR=38%, PF=0.76, avg=-0.050%, total=-0.6%, maxDD=-2%
+--- BASELINE (random RVOL days): n=895, WR=39%, PF=0.40, avg=-0.092%, total=-82.6%, maxDD=-56%
