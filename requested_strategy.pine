@@ -1,0 +1,151 @@
+//@version=5
+strategy("NSE Intraday Squeeze Scalper", overlay=true, initial_capital=100000, currency=currency.INR, default_qty_type=strategy.percent_of_equity, default_qty_value=2, commission_type=strategy.commission.percent, commission_value=0.03, slippage=2)
+
+// === INPUTS ===
+// Trend Filters
+emaLen = input.int(20, "EMA Length", minval=1)
+vwapAnchor = input.string("Session", "VWAP Anchor", options=["Session", "Week", "Month"])
+
+// Squeeze Momentum (LazyBear)
+bbLen = input.int(20, "BB Length")
+bbMult = input.float(2.0, "BB Mult")
+kcLen = input.int(20, "KC Length")
+kcMult = input.float(1.5, "KC Mult")
+useTrueRange = input.bool(true, "Use True Range for KC")
+
+// Exit Rules
+slType = input.string("ATR", "Stop Loss Type", options=["Fixed %", "ATR", "Pivot"])
+slPct = input.float(0.5, "SL Fixed %", step=0.1) / 100
+slAtrMult = input.float(1.5, "SL ATR Multiplier", step=0.1)
+tpType = input.string("Pivot", "Take Profit Type", options=["Pivot", "Risk Multiple"])
+tpRiskMult = input.float(2.0, "TP Risk Multiple", step=0.1)
+
+// Risk Management
+maxDailyTrades = input.int(3, "Max Daily Trades")
+maxDailyLossPct = input.float(2.0, "Max Daily Loss %", step=0.5) / 100
+posSizePct = input.float(2.0, "Position Size %", step=0.5) / 100
+
+// Session
+sessionTime = input.session("0915-1515", "Trading Session (IST)")
+exitTime = input.int(1515, "Force Exit Time (HHMM)")
+
+// === INDICATORS ===
+// EMA
+emaVal = ta.ema(close, emaLen)
+plot(emaVal, "EMA 20", color=color.blue)
+
+// VWAP
+var vwap_anchor_type = vwapAnchor == "Session" ? "D" : vwapAnchor == "Week" ? "W" : "M"
+vwapVal = ta.vwap(close) // Standard built-in VWAP resets daily by default
+plot(vwapVal, "VWAP", color=color.gray, linewidth=2)
+
+// Daily Pivots (Floor)
+[dHigh, dLow, dClose] = request.security(syminfo.tickerid, "D", [high[1], low[1], close[1]], lookahead=barmerge.lookahead_on)
+pivotP = (dHigh + dLow + dClose) / 3
+r1 = 2 * pivotP - dLow
+s1 = 2 * pivotP - dHigh
+r2 = pivotP + (dHigh - dLow)
+s2 = pivotP - (dHigh - dLow)
+r3 = dHigh + 2 * (pivotP - dLow)
+s3 = dLow - 2 * (dHigh - pivotP)
+
+plot(pivotP, "P", color=color.new(color.orange, 50), style=plot.style_linebr)
+plot(r1, "R1", color=color.new(color.red, 70), style=plot.style_linebr)
+plot(s1, "S1", color=color.new(color.green, 70), style=plot.style_linebr)
+
+// Squeeze Momentum (LazyBear Logic)
+basis = ta.sma(close, bbLen)
+dev = bbMult * ta.stdev(close, bbLen)
+upperBB = basis + dev
+lowerBB = basis - dev
+
+ma = ta.sma(close, kcLen)
+range_val = useTrueRange ? ta.tr : (high - low)
+rangema = ta.sma(range_val, kcLen)
+upperKC = ma + rangema * kcMult
+lowerKC = ma - rangema * kcMult
+
+sqzOn  = (lowerBB > lowerKC) and (upperBB < upperKC)
+sqzOff = (lowerBB < lowerKC) and (upperBB > upperKC)
+noSqz  = (sqzOn == false) and (sqzOff == false)
+
+highestH = ta.highest(high, kcLen)
+lowestL = ta.lowest(low, kcLen)
+avgHL = (highestH + lowestL) / 2
+val = ta.linreg(close - (avgHL + ta.sma(close, kcLen)) / 2, kcLen, 0)
+
+// === SIGNALS ===
+inSession = not na(time(timeframe.period, sessionTime, "GMT+530"))
+histRising = val > val[1] and val[1] > val[2]
+histFalling = val < val[1] and val[1] < val[2]
+
+// Squeeze release within last 3 bars
+sqzRelease = ta.barssince(sqzOn[1] and not sqzOn) <= 3
+
+longCondition = inSession and close > emaVal and close > vwapVal and ta.crossunder(val[1], 0) == false and val > 0 and val[1] <= 0 and sqzRelease and histRising
+shortCondition = inSession and close < emaVal and close < vwapVal and ta.crossover(val[1], 0) == false and val < 0 and val[1] >= 0 and sqzRelease and histFalling
+
+// === RISK MGMT ===
+var float dailyLoss = 0.0
+var int dailyTrades = 0
+if ta.change(time("D"))
+    dailyLoss := 0.0
+    dailyTrades := 0
+
+canTrade = dailyTrades < maxDailyTrades and dailyLoss > -strategy.initial_capital * maxDailyLossPct
+
+// === EXECUTION ===
+if longCondition and canTrade and strategy.position_size == 0
+    float sl = 0.0
+    float tp = 0.0
+    
+    if slType == "Fixed %"
+        sl := close * (1 - slPct)
+    else if slType == "ATR"
+        sl := close - ta.atr(14) * slAtrMult
+    else
+        sl := s1
+        
+    if tpType == "Pivot"
+        tp := close > r1 ? (close > r2 ? r3 : r2) : r1
+    else
+        tp := close + (close - sl) * tpRiskMult
+        
+    strategy.entry("Long", strategy.long, comment="Sqz Release")
+    strategy.exit("Exit Long", "Long", stop=sl, limit=tp)
+    dailyTrades += 1
+
+if shortCondition and canTrade and strategy.position_size == 0
+    float sl = 0.0
+    float tp = 0.0
+    
+    if slType == "Fixed %"
+        sl := close * (1 + slPct)
+    else if slType == "ATR"
+        sl := close + ta.atr(14) * slAtrMult
+    else
+        sl := r1
+        
+    if tpType == "Pivot"
+        tp := close < s1 ? (close < s2 ? s3 : s2) : s1
+    else
+        tp := close - (sl - close) * tpRiskMult
+        
+    strategy.entry("Short", strategy.short, comment="Sqz Release")
+    strategy.exit("Exit Short", "Short", stop=sl, limit=tp)
+    dailyTrades += 1
+
+// Time Exit
+currTime = hour * 100 + minute
+if currTime >= exitTime
+    strategy.close_all("EOD Exit")
+
+// Trend Invalidation
+if strategy.position_size > 0 and close < emaVal and close < vwapVal
+    strategy.close("Long", comment="Trend Fail")
+if strategy.position_size < 0 and close > emaVal and close > vwapVal
+    strategy.close("Short", comment="Trend Fail")
+
+// === PLOTS ===
+plot(val, "Squeeze Histogram", color=val > 0 ? (val > val[1] ? color.lime : color.green) : (val < val[1] ? color.red : color.maroon), style=plot.style_histogram, display=display.none)
+plot(0, "Zero Line", color=sqzOn ? color.black : color.gray, style=plot.style_circles, linewidth=2)
