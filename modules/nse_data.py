@@ -75,8 +75,9 @@ def _fetch_chart(symbol: str, interval: str, range_: str):
         return None
 
 
-def get_intraday_bars(symbol: str, interval: str = "5m", range_: str = "5d") -> pd.DataFrame:
-    """Return DataFrame with columns time(open) OHLCV for the given intraday interval."""
+def get_intraday_bars(symbol: str, interval: str = "5m", range_: str = "5d", **kwargs) -> pd.DataFrame:
+    """Return DataFrame with OHLCV and a time column for the requested interval."""
+    range_ = kwargs.get("range", range_)
     res = _fetch_chart(symbol, interval, range_)
     if not res:
         return pd.DataFrame()
@@ -91,6 +92,8 @@ def get_intraday_bars(symbol: str, interval: str = "5m", range_: str = "5d") -> 
     }, index=pd.to_datetime(ts, unit="s", utc=True).tz_convert("Asia/Kolkata"))
     df = df.dropna(subset=["close"])
     df.index.name = "time"
+    df = df.reset_index()
+    df["time"] = pd.to_datetime(df["time"])
     return df
 
 
@@ -103,6 +106,7 @@ def get_quote(symbol: str) -> dict:
     return {
         "symbol": symbol,
         "price": meta.get("regularMarketPrice"),
+        "open": meta.get("regularMarketDayHigh") and meta.get("regularMarketDayLow") and ((meta.get("regularMarketDayHigh") + meta.get("regularMarketDayLow")) / 2) or meta.get("chartPreviousClose"),
         "prev_close": meta.get("chartPreviousClose") or meta.get("previousClose"),
         "day_change_pct": meta.get("regularMarketChangePercent"),
         "volume": meta.get("regularMarketVolume"),
@@ -127,6 +131,21 @@ def batch_quotes(symbols: list[str], workers: int = 8) -> dict:
                 out[s] = {}
             time.sleep(0.25)  # be gentle on the free endpoint
     return out
+
+
+def fetch_live_quotes(symbols: list[str]) -> pd.DataFrame:
+    """Return a DataFrame compatible with the live engine's ranking logic."""
+    rows = []
+    for symbol in symbols:
+        quote = get_quote(symbol)
+        if quote.get("price") is not None:
+            rows.append({
+                "symbol": symbol,
+                "price": quote.get("price"),
+                "open": quote.get("open") or quote.get("prev_close"),
+                "volume": quote.get("volume"),
+            })
+    return pd.DataFrame(rows)
 
 
 if __name__ == "__main__":
