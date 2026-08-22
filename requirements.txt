@@ -2,4 +2,10 @@ pandas
 numpy
 requests
 yfinance
-sqlite3
+feedparser
+curl_cffi
+lxml
+beautifulsoup4
+
+# sqlite3 is included with Python; it is intentionally not installed from pip.
+
