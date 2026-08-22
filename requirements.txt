@@ -9,3 +9,5 @@ beautifulsoup4
 
 # sqlite3 is included with Python; it is intentionally not installed from pip.
 
+Flask
+

@@ -6,6 +6,7 @@ Logic: Golden Squeeze-Momentum Strategy.
 2. Filters: EMA 50 + VWAP + Squeeze Momentum (Min 5 bars) + RVOL > 2.0.
 3. Sends alerts via Ntfy.
 """
+import os
 import time
 import logging
 import pandas as pd
@@ -20,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger("nse_engine")
 
 # Configuration
-NTFY_TOPIC = "nse_scalper_signals"
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "nse_scalper_signals")
 NTFY_URL = f"https://ntfy.sh/{NTFY_TOPIC}"
 
 def send_alert(message, tags=None):
@@ -40,6 +41,7 @@ def check_stock(sym, rvol_thresh=2.0, min_sqz=5):
         bars['ema50'] = bars['close'].ewm(span=50, adjust=False).mean()
         bars['vwap'] = calc_vwap(bars)
         bars['val'], bars['sqzOn'] = squeeze_momentum(bars)
+        bars['atr'] = atr(bars)
         bars['rvol'] = rvol(bars)
         
         # Squeeze duration
