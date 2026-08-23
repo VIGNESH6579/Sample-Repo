@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: nse-scalper-engine
+    name: simple-logic
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
@@ -11,3 +11,7 @@ services:
         value: 3.11.0
       - key: NTFY_TOPIC
         sync: false
+      - key: NTFY_TOKEN
+        sync: false
+      - key: TRADINGVIEW_SCANNER_URL
+        value: https://scanner.tradingview.com/india/scan

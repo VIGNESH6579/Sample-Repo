@@ -1,101 +1,116 @@
-"""
-engine.py — Live Signal Engine for NSE F&O Momentum Scalping.
+from __future__ import annotations
 
-Logic: Golden Squeeze-Momentum Strategy.
-1. Monitors Top 10 Gainers and Losers (refreshed every 15m).
-2. Filters: EMA 50 + VWAP + Squeeze Momentum (Min 5 bars) + RVOL > 2.0.
-3. Sends alerts via Ntfy.
-"""
-import os
-import time
+import json
 import logging
-import pandas as pd
-import numpy as np
+import os
+import threading
+from datetime import datetime, time as dt_time
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
 import requests
-from modules.nse_data import fetch_live_quotes, get_intraday_bars, FO_STOCKS
-from backtest_iter15 import squeeze_momentum, calc_vwap
-from backtest_iter4 import atr, rvol
 
-# Configure Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("nse_engine")
+from simple_logic import Position, SimpleLogic
+from tradingview_adapter import TradingViewScanner
 
-# Configuration
-NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "nse_scalper_signals")
-NTFY_URL = f"https://ntfy.sh/{NTFY_TOPIC}"
+log = logging.getLogger("simple_logic")
+IST = ZoneInfo("Asia/Kolkata")
 
-def send_alert(message, tags=None):
-    try:
-        requests.post(NTFY_URL, data=message.encode('utf-8'), headers={"Tags": tags or ""})
-        logger.info(f"Alert sent: {message}")
-    except Exception as e:
-        logger.error(f"Failed to send alert: {e}")
 
-def check_stock(sym, rvol_thresh=2.0, min_sqz=5):
-    try:
-        # 1. Get Intraday 5m Bars
-        bars = get_intraday_bars(sym, interval="5m", range="1d")
-        if bars.empty or len(bars) < 20: return
-        
-        # 2. Calculate Technicals
-        bars['ema50'] = bars['close'].ewm(span=50, adjust=False).mean()
-        bars['vwap'] = calc_vwap(bars)
-        bars['val'], bars['sqzOn'] = squeeze_momentum(bars)
-        bars['atr'] = atr(bars)
-        bars['rvol'] = rvol(bars)
-        
-        # Squeeze duration
-        bars['sqz_len'] = bars['sqzOn'].astype(int).groupby(bars['sqzOn'].astype(int).diff().ne(0).cumsum()).cumsum()
-        
-        last = bars.iloc[-1]
-        prev = bars.iloc[-2]
-        
-        # 3. High-Win-Rate Signal Logic (58.7% WR)
-        # Time Window Filter: 10:00 AM - 2:30 PM IST
-        if not (10 <= last['time'].hour <= 14): return
-        
-        is_long = last['close'] > last['ema50'] and last['close'] > last['vwap'] and last['val'] > 0 and prev['val'] <= 0
-        is_short = last['close'] < last['ema50'] and last['close'] < last['vwap'] and last['val'] < 0 and prev['val'] >= 0
-        
-        if (is_long or is_short) and last['rvol'] >= rvol_thresh and prev['sqz_len'] >= min_sqz:
-            side = "🚀 BUY" if is_long else "🚨 SELL"
-            tp = last['close'] + last['atr'] * 1.5 if is_long else last['close'] - last['atr'] * 1.5
-            sl = last['close'] - last['atr'] * 2.0 if is_long else last['close'] + last['atr'] * 2.0
-            msg = f"{side} SETUP: {sym}\nPrice: {last['close']:.2f}\nTarget: {tp:.2f}\nStop: {sl:.2f}\nLogic: 58% WR Scalp"
-            send_alert(msg, tags="fire,chart_with_upwards_trend" if is_long else "warning,chart_with_downwards_trend")
+class Monitor:
+    def __init__(self):
+        self.logic = SimpleLogic()
+        self.provider = TradingViewScanner()
+        self.lock = threading.Lock()
+        self.latest = {"status": "starting", "last_cycle": None, "candidate": [], "position": [], "message": None}
+        self.positions: dict[str, Position] = {}
+        self.alerted_setups: set[str] = set()
+        self.trade_date: str | None = None
+        self.stop_event = threading.Event()
+        self.symbols = self._load_symbols()
+        self.ntfy_topic = os.getenv("NTFY_TOPIC", "simple_logic_alerts")
+        self.ntfy_token = os.getenv("NTFY_TOKEN", "")
 
-    except Exception as e:
-        logger.error(f"Error checking {sym}: {e}")
+    @staticmethod
+    def _load_symbols() -> list[str]:
+        from modules.nse_data import FO_STOCKS
+        return [s for s in FO_STOCKS if s.upper() not in {"LTIM", "LTIMINDTREE"}]
 
-def get_top_movers():
-    logger.info("Refreshing Top 10 Gainers and Losers...")
-    quotes = fetch_live_quotes(FO_STOCKS)
-    if quotes.empty: return FO_STOCKS[:20]
-    
-    quotes['change'] = (quotes['price'] - quotes['open']) / quotes['open']
-    sorted_q = quotes.sort_values('change')
-    top_losers = sorted_q.head(10)['symbol'].tolist()
-    top_gainers = sorted_q.tail(10)['symbol'].tolist()
-    return list(set(top_gainers + top_losers))
+    def _notify(self, title: str, message: str, priority: str = "default", tags: str = "chart_with_upwards_trend"):
+        if not self.ntfy_topic:
+            return
+        headers = {"Title": title, "Priority": priority, "Tags": tags}
+        if self.ntfy_token:
+            headers["Authorization"] = f"Bearer {self.ntfy_token}"
+        try:
+            response = requests.post(f"https://ntfy.sh/{self.ntfy_topic}", data=message.encode(), headers=headers, timeout=15)
+            response.raise_for_status()
+        except Exception:
+            log.exception("ntfy notification failed")
 
-def main():
-    logger.info("Starting NSE Live Signal Engine (Golden Momentum Focus)...")
-    send_alert("NSE Scalper Engine Started. Monitoring Top Movers with Golden Settings.", tags="rocket")
-    
-    last_refresh = 0
-    targets = []
-    
-    while True:
-        if time.time() - last_refresh > 900:
-            targets = get_top_movers()
-            last_refresh = time.time()
-            logger.info(f"Monitoring Targets: {', '.join(targets)}")
-        
-        for sym in targets:
-            check_stock(sym)
-            time.sleep(1)
-        
-        time.sleep(60)
+    def _in_market_hours(self, now: datetime) -> bool:
+        t = now.astimezone(IST).time()
+        return dt_time(9, 15) <= t <= dt_time(15, 35)
 
-if __name__ == "__main__":
-    main()
+    def cycle(self):
+        now = datetime.now(IST)
+        with self.lock:
+            if self.trade_date != now.date().isoformat():
+                self.trade_date = now.date().isoformat()
+                self.alerted_setups.clear()
+            self.latest["last_cycle"] = now.isoformat()
+            self.latest["status"] = "market_closed" if not self._in_market_hours(now) else "scanning"
+        if not self._in_market_hours(now):
+            return
+
+        snapshots = self.provider.snapshots(self.symbols)
+        by_key = {f"{s.symbol}:{side}": s for s in snapshots for side in ("CALL", "PUT")}
+        with self.lock:
+            for key, position in list(self.positions.items()):
+                current = by_key.get(key)
+                if not current:
+                    continue
+                premium = current.atm_call_premium if position.side == "CALL" else current.atm_put_premium
+                if premium is not None:
+                    should, reason = self.logic.should_exit(position, premium, current.ltp, current.day_high, current.day_low, now)
+                    if should:
+                        self._notify("Simple Logic EXIT", f"SELL {position.side} {position.symbol}\nReason: {reason}\nPremium: {premium:.2f}", "high", "warning,chart_with_downwards_trend")
+                        self.latest["message"] = f"Exited {position.symbol} {position.side}: {reason}"
+                        self.positions.pop(key, None)
+                        self.alerted_setups.discard(key)
+
+            candidates = self.logic.candidates(snapshots, now)
+            self.latest["candidate"] = [c.to_dict() for c in candidates]
+            for candidate in candidates:
+                key = f"{candidate.symbol}:{candidate.side}"
+                if candidate.premium is None or key in self.positions:
+                    continue
+                position = Position(candidate.symbol, candidate.side, candidate.premium, candidate.spot, now)
+                self.positions[key] = position
+                self.alerted_setups.add(key)
+                self._notify("Simple Logic ENTRY", f"BUY ATM {candidate.side}\nStock: {candidate.symbol}\nSpot: {candidate.spot:.2f}\nPremium: {candidate.premium:.2f}\nScore: {candidate.score:.2f}\nWindow: 09:30-11:30 IST", "high", "rocket,chart_with_upwards_trend")
+                self.latest["message"] = f"Entered {candidate.symbol} {candidate.side}"
+            self.latest["position"] = [p.__dict__ for p in self.positions.values()]
+
+    def run(self):
+        log.info("Simple Logic monitor started for %d symbols; LTIM excluded", len(self.symbols))
+        while not self.stop_event.is_set():
+            try:
+                self.cycle()
+            except Exception:
+                log.exception("monitor cycle failed")
+                with self.lock:
+                    self.latest["status"] = "error"
+            self.stop_event.wait(60)
+
+    def status(self):
+        with self.lock:
+            data = dict(self.latest)
+            data["symbols"] = len(self.symbols)
+            data["excluded"] = ["LTIM", "LTIMindtree"]
+            data["provider"] = "TradingView scanner"
+            data["trade_date"] = self.trade_date
+            return data
+
+
+monitor = Monitor()
