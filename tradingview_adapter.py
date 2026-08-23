@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Iterable
 
 import requests
@@ -48,6 +50,7 @@ class TradingViewScanner:
             "bid", "ask", "call_oi_change_pct", "put_oi_change_pct",
             "call_spread", "put_spread", "atm_call_premium", "atm_put_premium",
         ]
+        fetched_at = datetime.now(ZoneInfo('Asia/Kolkata'))
         data = self._scan(symbols, columns)
         snapshots = []
         for row in data:
@@ -73,6 +76,7 @@ class TradingViewScanner:
                 "put_spread": num("put_spread"),
                 "atm_call_premium": num("atm_call_premium"),
                 "atm_put_premium": num("atm_put_premium"),
+                "timestamp": fetched_at,
             }
             if all(values.get(k) is not None for k in ("symbol", "ltp", "vwap", "day_high", "day_low", "volume", "average_volume")):
                 snapshots.append(MarketSnapshot(**values))

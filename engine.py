@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
 from datetime import datetime, time as dt_time
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
 
 from simple_logic import Position, SimpleLogic
 from tradingview_adapter import TradingViewScanner
+from universe import load_universe
 
 log = logging.getLogger("simple_logic")
 IST = ZoneInfo("Asia/Kolkata")
@@ -22,19 +21,17 @@ class Monitor:
         self.logic = SimpleLogic()
         self.provider = TradingViewScanner()
         self.lock = threading.Lock()
-        self.latest = {"status": "starting", "last_cycle": None, "candidate": [], "position": [], "message": None}
+        self.latest = {"status": "starting", "last_cycle": None, "candidate": [], "position": [], "message": None, "live_rows": 0}
         self.positions: dict[str, Position] = {}
-        self.alerted_setups: set[str] = set()
         self.trade_date: str | None = None
+        self.start_sent_date: str | None = None
+        self.eod_sent_date: str | None = None
+        self.day_stats = {"entries": 0, "exits": 0, "entry_symbols": [], "exit_reasons": []}
         self.stop_event = threading.Event()
-        self.symbols = self._load_symbols()
+        self.universe = load_universe()
+        self.symbols = [row["ticker"] for row in self.universe]
         self.ntfy_topic = os.getenv("NTFY_TOPIC", "simple_logic_alerts")
         self.ntfy_token = os.getenv("NTFY_TOKEN", "")
-
-    @staticmethod
-    def _load_symbols() -> list[str]:
-        from modules.nse_data import FO_STOCKS
-        return [s for s in FO_STOCKS if s.upper() not in {"LTIM", "LTIMINDTREE"}]
 
     def _notify(self, title: str, message: str, priority: str = "default", tags: str = "chart_with_upwards_trend"):
         if not self.ntfy_topic:
@@ -48,16 +45,42 @@ class Monitor:
         except Exception:
             log.exception("ntfy notification failed")
 
+    @staticmethod
+    def _local_now() -> datetime:
+        return datetime.now(IST)
+
+    def _send_day_start(self, now: datetime):
+        date_key = now.date().isoformat()
+        if self.start_sent_date == date_key:
+            return
+        self.start_sent_date = date_key
+        self.day_stats = {"entries": 0, "exits": 0, "entry_symbols": [], "exit_reasons": []}
+        self._notify("Simple Logic DAY START", f"NSE F&O monitoring started\nDate: {date_key}\nTime: 09:15 IST\nStocks loaded: {len(self.symbols)}\nExcluded: LTIMindtree\nProvider: TradingView live scanner", "default", "sunrise,chart_with_upwards_trend")
+
+    def _send_eod(self, now: datetime):
+        date_key = now.date().isoformat()
+        if self.eod_sent_date == date_key:
+            return
+        self.eod_sent_date = date_key
+        entries = ', '.join(self.day_stats["entry_symbols"]) or 'None'
+        reasons = ', '.join(self.day_stats["exit_reasons"]) or 'None'
+        self._notify("Simple Logic EOD REPORT", f"NSE F&O monitoring ended\nDate: {date_key}\nTime: 15:40 IST\nEntry signals: {self.day_stats['entries']}\nEntry stocks: {entries}\nExits: {self.day_stats['exits']}\nExit reasons: {reasons}\nOpen positions: {len(self.positions)}\nUniverse: {len(self.symbols)} stocks; LTIM excluded", "default", "bar_chart")
+
     def _in_market_hours(self, now: datetime) -> bool:
         t = now.astimezone(IST).time()
         return dt_time(9, 15) <= t <= dt_time(15, 35)
 
     def cycle(self):
-        now = datetime.now(IST)
+        now = self._local_now()
         with self.lock:
             if self.trade_date != now.date().isoformat():
                 self.trade_date = now.date().isoformat()
-                self.alerted_setups.clear()
+                self.start_sent_date = None
+                self.eod_sent_date = None
+            if now.time() >= dt_time(9, 15):
+                self._send_day_start(now)
+            if now.time() >= dt_time(15, 40):
+                self._send_eod(now)
             self.latest["last_cycle"] = now.isoformat()
             self.latest["status"] = "market_closed" if not self._in_market_hours(now) else "scanning"
         if not self._in_market_hours(now):
@@ -66,6 +89,7 @@ class Monitor:
         snapshots = self.provider.snapshots(self.symbols)
         by_key = {f"{s.symbol}:{side}": s for s in snapshots for side in ("CALL", "PUT")}
         with self.lock:
+            self.latest["live_rows"] = len(snapshots)
             for key, position in list(self.positions.items()):
                 current = by_key.get(key)
                 if not current:
@@ -74,10 +98,11 @@ class Monitor:
                 if premium is not None:
                     should, reason = self.logic.should_exit(position, premium, current.ltp, current.day_high, current.day_low, now)
                     if should:
-                        self._notify("Simple Logic EXIT", f"SELL {position.side} {position.symbol}\nReason: {reason}\nPremium: {premium:.2f}", "high", "warning,chart_with_downwards_trend")
+                        self._notify("Simple Logic EXIT", f"SELL {position.side}\\nStock: {position.symbol}\\nEntry Premium: {position.entry_premium:.2f}\\nExit Premium: {premium:.2f}\\nReason: {reason}", "high", "warning,chart_with_downwards_trend")
                         self.latest["message"] = f"Exited {position.symbol} {position.side}: {reason}"
+                        self.day_stats["exits"] += 1
+                        self.day_stats["exit_reasons"].append(reason)
                         self.positions.pop(key, None)
-                        self.alerted_setups.discard(key)
 
             candidates = self.logic.candidates(snapshots, now)
             self.latest["candidate"] = [c.to_dict() for c in candidates]
@@ -87,13 +112,14 @@ class Monitor:
                     continue
                 position = Position(candidate.symbol, candidate.side, candidate.premium, candidate.spot, now)
                 self.positions[key] = position
-                self.alerted_setups.add(key)
-                self._notify("Simple Logic ENTRY", f"BUY ATM {candidate.side}\nStock: {candidate.symbol}\nSpot: {candidate.spot:.2f}\nPremium: {candidate.premium:.2f}\nScore: {candidate.score:.2f}\nWindow: 09:30-11:30 IST", "high", "rocket,chart_with_upwards_trend")
+                self.day_stats["entries"] += 1
+                self.day_stats["entry_symbols"].append(f"{candidate.symbol} {candidate.side}")
+                self._notify("Simple Logic ENTRY", f"BUY ATM {candidate.side}\\nStock: {candidate.symbol}\\nSpot: {candidate.spot:.2f}\\nPremium: {candidate.premium:.2f}\\nScore: {candidate.score:.2f}", "high", "rocket,chart_with_upwards_trend")
                 self.latest["message"] = f"Entered {candidate.symbol} {candidate.side}"
             self.latest["position"] = [p.__dict__ for p in self.positions.values()]
 
     def run(self):
-        log.info("Simple Logic monitor started for %d symbols; LTIM excluded", len(self.symbols))
+        log.info("Simple Logic monitor started for %d live-mapped stocks; LTIM excluded", len(self.symbols))
         while not self.stop_event.is_set():
             try:
                 self.cycle()
@@ -108,8 +134,10 @@ class Monitor:
             data = dict(self.latest)
             data["symbols"] = len(self.symbols)
             data["excluded"] = ["LTIM", "LTIMindtree"]
-            data["provider"] = "TradingView scanner"
+            data["provider"] = "TradingView live scanner"
             data["trade_date"] = self.trade_date
+            data["start_sent_date"] = self.start_sent_date
+            data["eod_sent_date"] = self.eod_sent_date
             return data
 
 
