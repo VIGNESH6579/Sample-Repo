@@ -9,9 +9,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      - key: NTFY_TOPIC
+      - key: TELEGRAM_BOT_TOKEN
         sync: false
-      - key: NTFY_TOKEN
+      - key: TELEGRAM_CHAT_ID
         sync: false
       - key: TRADINGVIEW_SCANNER_URL
         value: https://scanner.tradingview.com/india/scan

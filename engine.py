@@ -33,38 +33,38 @@ class Monitor:
         self.stop_event = threading.Event()
         self.universe = load_universe()
         self.symbols = [row["ticker"] for row in self.universe]
-        self.ntfy_topic = os.getenv("NTFY_TOPIC", "simple_logic_alerts")
-        self.ntfy_token = os.getenv("NTFY_TOKEN", "")
+        self.telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        self.telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
 
     def _notify(self, title: str, message: str, priority: str = "default", tags: str = "chart_with_upwards_trend") -> bool:
-        if not self.ntfy_topic:
-            log.error("ntfy notification skipped: NTFY_TOPIC is empty")
+        if not self.telegram_bot_token or not self.telegram_chat_id:
+            log.error("Telegram notification skipped: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is empty")
             return False
-        headers = {"Title": title, "Priority": priority, "Tags": tags}
-        if self.ntfy_token:
-            headers["Authorization"] = f"Bearer {self.ntfy_token}"
-        url = f"https://ntfy.sh/{self.ntfy_topic}"
+        url = f"https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage"
+        payload = {"chat_id": self.telegram_chat_id, "text": f"{title}\n\n{message}", "disable_web_page_preview": True}
         for attempt in range(3):
             try:
-                response = requests.post(url, data=message.encode(), headers=headers, timeout=15)
+                response = requests.post(url, json=payload, timeout=15)
                 if response.status_code == 429:
-                    retry_after = response.headers.get("Retry-After", "5")
                     try:
-                        delay = min(max(float(retry_after), 1.0), 30.0)
-                    except ValueError:
+                        delay = min(max(float(response.json().get("parameters", {}).get("retry_after", 5)), 1.0), 30.0)
+                    except (ValueError, TypeError, AttributeError):
                         delay = 5.0
-                    log.warning("ntfy rate limited title=%s attempt=%d retry_after=%.1fs", title, attempt + 1, delay)
+                    log.warning("Telegram rate limited title=%s attempt=%d retry_after=%.1fs", title, attempt + 1, delay)
                     if attempt < 2:
                         time.sleep(delay)
                         continue
                 response.raise_for_status()
-                log.info("NTFY_SENT title=%s status=%d", title, response.status_code)
+                body = response.json()
+                if not body.get("ok"):
+                    raise RuntimeError(f"Telegram API returned ok=false: {body.get('description', 'unknown error')}")
+                log.info("TELEGRAM_SENT title=%s status=%d", title, response.status_code)
                 return True
             except Exception:
                 if attempt == 2:
-                    log.exception("ntfy notification failed title=%s", title)
+                    log.exception("Telegram notification failed title=%s", title)
                 else:
-                    log.warning("ntfy notification attempt failed title=%s attempt=%d", title, attempt + 1)
+                    log.warning("Telegram notification attempt failed title=%s attempt=%d", title, attempt + 1)
         return False
 
     @staticmethod

@@ -16,7 +16,7 @@ At or after **09:15 IST**, the service sends one day-start notification per date
 
 ## Deployment
 
-The public dashboard is available at `https://simple-logic.onrender.com/`, and the UptimeRobot target is `https://simple-logic.onrender.com/health`. Configure `NTFY_TOPIC` to a private, hard-to-guess ntfy topic and optionally configure `NTFY_TOKEN` for authenticated publishing. Angel One credentials are configured through `ANGEL_API_KEY`, `ANGEL_CLIENT_ID`, `ANGEL_PASSWORD`, and `ANGEL_TOTP_SECRET`. The adapter uses a session-start OI baseline and a historical daily volume baseline; it fails closed when required live fields are unavailable.
+The public dashboard is available at `https://simple-logic.onrender.com/`, and the UptimeRobot target is `https://simple-logic.onrender.com/health`. Configure `TELEGRAM_BOT_TOKEN` with the BotFather token and `TELEGRAM_CHAT_ID` with the destination chat ID. Telegram sends day-start, entry, exit, and EOD notifications through the Bot API. Angel One credentials are configured through `ANGEL_API_KEY`, `ANGEL_CLIENT_ID`, `ANGEL_PASSWORD`, and `ANGEL_TOTP_SECRET`. The adapter uses a session-start OI baseline and a historical daily volume baseline; it fails closed when required live fields are unavailable.
 
 ## Local run
 
