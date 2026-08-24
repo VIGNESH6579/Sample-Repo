@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from datetime import datetime, time as dt_time
 from zoneinfo import ZoneInfo
 
@@ -35,17 +36,36 @@ class Monitor:
         self.ntfy_topic = os.getenv("NTFY_TOPIC", "simple_logic_alerts")
         self.ntfy_token = os.getenv("NTFY_TOKEN", "")
 
-    def _notify(self, title: str, message: str, priority: str = "default", tags: str = "chart_with_upwards_trend"):
+    def _notify(self, title: str, message: str, priority: str = "default", tags: str = "chart_with_upwards_trend") -> bool:
         if not self.ntfy_topic:
-            return
+            log.error("ntfy notification skipped: NTFY_TOPIC is empty")
+            return False
         headers = {"Title": title, "Priority": priority, "Tags": tags}
         if self.ntfy_token:
             headers["Authorization"] = f"Bearer {self.ntfy_token}"
-        try:
-            response = requests.post(f"https://ntfy.sh/{self.ntfy_topic}", data=message.encode(), headers=headers, timeout=15)
-            response.raise_for_status()
-        except Exception:
-            log.exception("ntfy notification failed")
+        url = f"https://ntfy.sh/{self.ntfy_topic}"
+        for attempt in range(3):
+            try:
+                response = requests.post(url, data=message.encode(), headers=headers, timeout=15)
+                if response.status_code == 429:
+                    retry_after = response.headers.get("Retry-After", "5")
+                    try:
+                        delay = min(max(float(retry_after), 1.0), 30.0)
+                    except ValueError:
+                        delay = 5.0
+                    log.warning("ntfy rate limited title=%s attempt=%d retry_after=%.1fs", title, attempt + 1, delay)
+                    if attempt < 2:
+                        time.sleep(delay)
+                        continue
+                response.raise_for_status()
+                log.info("NTFY_SENT title=%s status=%d", title, response.status_code)
+                return True
+            except Exception:
+                if attempt == 2:
+                    log.exception("ntfy notification failed title=%s", title)
+                else:
+                    log.warning("ntfy notification attempt failed title=%s attempt=%d", title, attempt + 1)
+        return False
 
     @staticmethod
     def _local_now() -> datetime:
@@ -55,19 +75,21 @@ class Monitor:
         date_key = now.date().isoformat()
         if self.start_sent_date == date_key:
             return
-        self.start_sent_date = date_key
-        self.day_stats = {"entries": 0, "exits": 0, "entry_symbols": [], "exit_reasons": []}
         provider_name = getattr(self.provider, "name", "TradingView live scanner")
-        self._notify("Simple Logic DAY START", f"NSE F&O monitoring started\nDate: {date_key}\nTime: 09:15 IST\nStocks loaded: {len(self.symbols)}\nExcluded: LTIMindtree\nProvider: {provider_name}", "default", "sunrise,chart_with_upwards_trend")
+        sent = self._notify("Simple Logic DAY START", f"NSE F&O monitoring started\nDate: {date_key}\nTime: 09:15 IST\nStocks loaded: {len(self.symbols)}\nExcluded: LTIMindtree\nProvider: {provider_name}", "default", "sunrise,chart_with_upwards_trend")
+        if sent:
+            self.start_sent_date = date_key
+            self.day_stats = {"entries": 0, "exits": 0, "entry_symbols": [], "exit_reasons": []}
 
     def _send_eod(self, now: datetime):
         date_key = now.date().isoformat()
         if self.eod_sent_date == date_key:
             return
-        self.eod_sent_date = date_key
         entries = ', '.join(self.day_stats["entry_symbols"]) or 'None'
         reasons = ', '.join(self.day_stats["exit_reasons"]) or 'None'
-        self._notify("Simple Logic EOD REPORT", f"NSE F&O monitoring ended\nDate: {date_key}\nTime: 15:40 IST\nEntry signals: {self.day_stats['entries']}\nEntry stocks: {entries}\nExits: {self.day_stats['exits']}\nExit reasons: {reasons}\nOpen positions: {len(self.positions)}\nUniverse: {len(self.symbols)} stocks; LTIM excluded", "default", "bar_chart")
+        sent = self._notify("Simple Logic EOD REPORT", f"NSE F&O monitoring ended\nDate: {date_key}\nTime: 15:40 IST\nEntry signals: {self.day_stats['entries']}\nEntry stocks: {entries}\nExits: {self.day_stats['exits']}\nExit reasons: {reasons}\nOpen positions: {len(self.positions)}\nUniverse: {len(self.symbols)} stocks; LTIM excluded", "default", "bar_chart")
+        if sent:
+            self.eod_sent_date = date_key
 
     def _in_market_hours(self, now: datetime) -> bool:
         t = now.astimezone(IST).time()
