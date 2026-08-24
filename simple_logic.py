@@ -70,7 +70,7 @@ class SimpleLogic:
 
     def in_entry_window(self, now: datetime) -> bool:
         local = now.astimezone(self.timezone).time()
-        return time(9, 30) <= local <= time(11, 30)
+        return time(9, 30) <= local <= time(15, 20)
 
     def diagnose(self, s: MarketSnapshot, side: str, now: Optional[datetime] = None) -> dict:
         now = now or datetime.now(self.timezone)
