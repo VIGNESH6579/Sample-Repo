@@ -76,6 +76,13 @@ class AngelOneProvider:
             self.ready = True
             self.last_error = None
             return True
+        except requests.HTTPError as exc:
+            response = getattr(exc, "response", None)
+            code = getattr(response, "status_code", "unknown")
+            endpoint = getattr(response, "url", "unknown")
+            self.last_error = f"Angel One HTTP {code} at {endpoint.rsplit('/', 1)[-1]}"
+            log.error("Angel One HTTP failure status=%s endpoint=%s", code, endpoint)
+            return False
         except Exception as exc:
             self.last_error = f"Angel One connection failed: {type(exc).__name__}"
             log.exception("Angel One connection failed")
