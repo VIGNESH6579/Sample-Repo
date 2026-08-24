@@ -81,19 +81,19 @@ class SimpleLogic:
             if self.is_excluded(s.symbol) or s.volume_ratio <= 1.5:
                 continue
             if (
-                s.ltp > s.vwap and s.ltp > s.day_high and
+                s.ltp > s.vwap and s.ltp >= s.day_high and
                 (s.call_oi_change_pct is not None and s.call_oi_change_pct < -4) and
                 (s.call_spread is not None and s.call_spread < 1.5)
             ):
                 out.append(Candidate(s.symbol, "CALL", s.score("CALL"), s.ltp, s.atm_call_premium, now,
-                                     ["LTP > VWAP", "LTP > Day High", "Call OI change < -4%", "Call spread < 1.5", "Volume > 1.5x average"]))
+                                     ["LTP > VWAP", "LTP >= current-session Day High", "Call OI change < -4%", "Call spread < 1.5", "Volume > 1.5x average"]))
             if (
-                s.ltp < s.vwap and s.ltp < s.day_low and
+                s.ltp < s.vwap and s.ltp <= s.day_low and
                 (s.put_oi_change_pct is not None and s.put_oi_change_pct < -4) and
                 (s.put_spread is not None and s.put_spread < 1.5)
             ):
                 out.append(Candidate(s.symbol, "PUT", s.score("PUT"), s.ltp, s.atm_put_premium, now,
-                                     ["LTP < VWAP", "LTP < Day Low", "Put OI change < -4%", "Put spread < 1.5", "Volume > 1.5x average"]))
+                                     ["LTP < VWAP", "LTP <= current-session Day Low", "Put OI change < -4%", "Put spread < 1.5", "Volume > 1.5x average"]))
         return sorted(out, key=lambda c: c.score, reverse=True)
 
     def entry(self, snapshots: Iterable[MarketSnapshot], now: Optional[datetime] = None) -> Optional[Candidate]:
