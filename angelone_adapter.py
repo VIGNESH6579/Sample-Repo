@@ -44,7 +44,10 @@ class AngelOneProvider:
 
     def _headers(self, auth: bool = True) -> dict[str, str]:
         h = {"Content-Type": "application/json", "Accept": "application/json",
-             "X-UserType": "USER", "X-SourceID": "WEB", "X-PrivateKey": self.api_key}
+             "X-UserType": "USER", "X-SourceID": "WEB", "X-PrivateKey": self.api_key,
+             "X-ClientLocalIP": os.getenv("ANGEL_CLIENT_LOCAL_IP", "127.0.0.1"),
+             "X-ClientPublicIP": os.getenv("ANGEL_CLIENT_PUBLIC_IP", "127.0.0.1"),
+             "X-MACAddress": os.getenv("ANGEL_MAC_ADDRESS", "00:00:00:00:00:00")}
         if auth and self.jwt:
             h["Authorization"] = f"Bearer {self.jwt}"
         return h
