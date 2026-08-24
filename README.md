@@ -1,12 +1,12 @@
 # Simple Logic
 
-Simple Logic is an alert-only NSE F&O option scalp monitor. It uses the supplied `NSE_FO_Options_Stocks_List.xlsx` as its universe, maps every non-LTIM company to an NSE/TradingView symbol, and uses live TradingView scanner responses at runtime. The verified universe contains **207 stocks after excluding LTIMindtree**. The application does not place orders.
+Simple Logic is an alert-only NSE F&O option scalp monitor. It uses the supplied `NSE_FO_Options_Stocks_List.xlsx` as its universe, maps every non-LTIM company to an NSE/Angel One symbol, and uses live Angel One SmartAPI responses at runtime. The verified universe contains **207 stocks after excluding LTIMindtree**. The application does not place orders.
 
 ## Live monitoring behavior
 
-The service polls TradingView during market hours and rejects incomplete rows instead of substituting hard-coded prices. It reads each stock’s live LTP, VWAP, current session high and low, volume, and average volume. The current session high and low are evaluated per stock, not shared across the universe. The option OI, spread, and ATM-premium fields must also be present in the configured live feed before a signal can be produced.
+The service polls TradingView during market hours and rejects incomplete rows instead of substituting hard-coded prices. It reads each stock’s live LTP, VWAP, current session high and low, volume, and a historical daily average-volume baseline. The current session high and low are evaluated per stock, not shared across the universe. The option OI, spread, and ATM-premium fields must also be present in the configured live feed before a signal can be produced.
 
-The entry window is 09:30–11:30 IST. A CALL candidate requires LTP above VWAP and at or above the stock’s current-session high, call OI change below -4%, call spread below 1.5, and volume above 1.5 times average volume. A PUT candidate uses the mirrored conditions below VWAP and at or below the stock’s current-session low. Every qualifying stock can generate a signal; there is no one-signal-per-day limit. Duplicate unchanged setups are suppressed while the same symbol-side position is active.
+The entry window is 09:30–15:20 IST. A CALL candidate requires LTP above VWAP and at or above the stock’s current-session high, call OI change below -4%, call spread below 1.5, and volume above 1.5 times average volume. A PUT candidate uses the mirrored conditions below VWAP and at or below the stock’s current-session low. Every qualifying stock can generate a signal; there is no one-signal-per-day limit. Duplicate unchanged setups are suppressed while the same symbol-side position is active.
 
 Exits are generated at option premium +40%, option premium -25%, 45 minutes after entry, or when the underlying breaks the relevant stock-specific day-high/day-low confirmation.
 
@@ -16,7 +16,7 @@ At or after **09:15 IST**, the service sends one day-start notification per date
 
 ## Deployment
 
-The public dashboard is available at `https://simple-logic.onrender.com/`, and the UptimeRobot target is `https://simple-logic.onrender.com/health`. Configure `NTFY_TOPIC` to a private, hard-to-guess ntfy topic and optionally configure `NTFY_TOKEN` for authenticated publishing. `TRADINGVIEW_SCANNER_URL` defaults to `https://scanner.tradingview.com/india/scan`.
+The public dashboard is available at `https://simple-logic.onrender.com/`, and the UptimeRobot target is `https://simple-logic.onrender.com/health`. Configure `NTFY_TOPIC` to a private, hard-to-guess ntfy topic and optionally configure `NTFY_TOKEN` for authenticated publishing. Angel One credentials are configured through `ANGEL_API_KEY`, `ANGEL_CLIENT_ID`, `ANGEL_PASSWORD`, and `ANGEL_TOTP_SECRET`. The adapter uses a session-start OI baseline and a historical daily volume baseline; it fails closed when required live fields are unavailable.
 
 ## Local run
 
@@ -25,7 +25,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-The `/` route provides the dashboard, `/health` is the uptime target, and `/api/status` exposes runtime status. `run_tests.py` checks the deterministic strategy logic. `verify_live_coverage.py` checks that all 207 mapped tickers return live TradingView rows.
+The `/` route provides the dashboard, `/health` is the uptime target, and `/api/status` exposes runtime status. `run_tests.py` checks the deterministic strategy logic. `verify_live_coverage.py` checks mapped ticker coverage; `/api/diagnose/<symbol>` reports the live pass/fail conditions for one symbol.
 
 ## Disclaimer
 

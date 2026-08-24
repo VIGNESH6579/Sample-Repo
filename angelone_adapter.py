@@ -9,7 +9,9 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+from statistics import mean
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
@@ -40,6 +42,10 @@ class AngelOneProvider:
         self.equity_by_name: dict[str, dict] = {}
         self.options_by_name: dict[str, list[dict]] = {}
         self.previous_oi: dict[str, float] = {}
+        self.session_oi: dict[str, float] = {}
+        self.session_oi_date: str | None = None
+        self.volume_baseline: dict[str, float] = {}
+        self.volume_baseline_date: str | None = None
         self.ready = False
 
     def _headers(self, auth: bool = True) -> dict[str, str]:
@@ -107,6 +113,52 @@ class AngelOneProvider:
     def _quote_payload(data: dict) -> list[dict]:
         return (data.get("data") or {}).get("fetched") or []
 
+    def _historical_average_volume(self, token: str) -> float | None:
+        today = datetime.now(IST).date()
+        if self.volume_baseline_date != today.isoformat():
+            self.volume_baseline.clear()
+            self.volume_baseline_date = today.isoformat()
+        if token in self.volume_baseline:
+            return self.volume_baseline[token]
+        to_date = datetime.now(IST).replace(hour=9, minute=15, second=0, microsecond=0)
+        from_date = to_date - timedelta(days=45)
+        body = {"exchange": "NSE", "symboltoken": str(token), "interval": "ONE_DAY",
+                "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
+                "todate": to_date.strftime("%Y-%m-%d %H:%M")}
+        try:
+            r = self.session.post(ROOT + "/rest/secure/angelbroking/historical/v1/getCandleData",
+                                  json=body, headers=self._headers(), timeout=self.timeout)
+            r.raise_for_status()
+            rows = (r.json().get("data") or [])
+            volumes = [float(row[5]) for row in rows[-20:] if len(row) > 5 and self._num(row[5]) is not None]
+            baseline = mean(volumes) if volumes else None
+            if baseline is not None:
+                self.volume_baseline[token] = baseline
+            return baseline
+        except Exception as exc:
+            log.warning("historical volume unavailable token=%s error=%s", token, type(exc).__name__)
+            return None
+
+    def _volume_baselines(self, rows: dict[str, dict]) -> dict[str, float]:
+        result: dict[str, float] = {}
+        missing = [(symbol, row) for symbol, row in rows.items() if str(row.get("token")) not in self.volume_baseline]
+        if missing:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = {pool.submit(self._historical_average_volume, str(row["token"])): symbol for symbol, row in missing}
+                for future in as_completed(futures):
+                    symbol = futures[future]
+                    try:
+                        value = future.result()
+                    except Exception:
+                        value = None
+                    if value is not None:
+                        result[symbol] = value
+        for symbol, row in rows.items():
+            value = self.volume_baseline.get(str(row.get("token")))
+            if value is not None:
+                result[symbol] = value
+        return result
+
     def _quotes(self, exchange: str, tokens: list[str]) -> dict[str, dict]:
         out: dict[str, dict] = {}
         for start in range(0, len(tokens), 50):
@@ -160,6 +212,10 @@ class AngelOneProvider:
         if not self.connect():
             return []
         symbols = [s.upper().strip() for s in symbols if s]
+        today_key = datetime.now(IST).date().isoformat()
+        if self.session_oi_date != today_key:
+            self.session_oi.clear()
+            self.session_oi_date = today_key
         equities = {s: self.equity_by_name.get(s) for s in symbols}
         equities = {s: row for s, row in equities.items() if row}
         eq_quotes = self._quotes("NSE", [str(row["token"]) for row in equities.values()])
@@ -174,6 +230,7 @@ class AngelOneProvider:
                 if contract:
                     options[(symbol, side)] = contract
         opt_quotes = self._quotes("NFO", [str(row["token"]) for row in options.values()]) if options else {}
+        volume_baselines = self._volume_baselines(equities)
         fetched_at = datetime.now(IST)
         out: list[MarketSnapshot] = []
         for symbol, row in equities.items():
@@ -182,16 +239,17 @@ class AngelOneProvider:
                 continue
             spot = self._num(eq.get("ltp")); high = self._num(eq.get("high")); low = self._num(eq.get("low"))
             vwap = self._num(eq.get("avgPrice")); volume = self._num(eq.get("tradeVolume"))
-            # A true average-volume baseline is required; SmartAPI full quote does
-            # not provide it, so use the prior close-day volume cache only when set.
-            average = self._num(eq.get("tradeVolume"))
+            average = volume_baselines.get(symbol)
             if None in (spot, high, low, vwap, volume, average):
                 continue
             cq, pq = opt_quotes.get(str((options.get((symbol, "CALL")) or {}).get("token"))), opt_quotes.get(str((options.get((symbol, "PUT")) or {}).get("token")))
             def oi_pair(q, key):
                 oi = self._num((q or {}).get("opnInterest"))
-                prev = self.previous_oi.get(key)
-                change = ((oi - prev) / prev * 100) if oi is not None and prev not in (None, 0) else None
+                baseline = self.session_oi.get(key)
+                if oi is not None and baseline is None:
+                    self.session_oi[key] = oi
+                    baseline = oi
+                change = ((oi - baseline) / baseline * 100) if oi is not None and baseline not in (None, 0) else None
                 if oi is not None: self.previous_oi[key] = oi
                 return change
             call_change = oi_pair(cq, symbol + ":CALL")
