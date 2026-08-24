@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 from flask import Flask, jsonify, render_template_string
 
 from engine import monitor

@@ -90,6 +90,12 @@ class Monitor:
             return
 
         snapshots = self.provider.snapshots(self.symbols)
+        if hasattr(self.provider, "status"):
+            self.provider_status = self.provider.status()
+        log.info("DATA_CYCLE provider=%s live_rows=%d symbols=%d option_data_ready=%s ready=%s last_error=%s",
+                 getattr(self.provider, "name", type(self.provider).__name__), len(snapshots), len(self.symbols),
+                 self.provider_status.get("option_data_ready"), self.provider_status.get("ready"),
+                 self.provider_status.get("last_error"))
         by_key = {f"{s.symbol}:{side}": s for s in snapshots for side in ("CALL", "PUT")}
         with self.lock:
             self.latest["live_rows"] = len(snapshots)
@@ -129,7 +135,7 @@ class Monitor:
             try:
                 self.cycle()
             except Exception:
-                log.exception("monitor cycle failed")
+                log.exception("MONITOR_CYCLE_FAILED")
                 with self.lock:
                     self.latest["status"] = "error"
             self.stop_event.wait(60)
