@@ -20,7 +20,7 @@ from simple_logic import MarketSnapshot
 log = logging.getLogger(__name__)
 IST = ZoneInfo("Asia/Kolkata")
 ROOT = "https://apiconnect.angelone.in"
-MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPIScripMaster/OpenAPIScripMaster.json"
+MASTER_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
 
 
 class AngelOneProvider:
