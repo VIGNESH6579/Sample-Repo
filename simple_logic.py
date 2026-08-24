@@ -72,6 +72,25 @@ class SimpleLogic:
         local = now.astimezone(self.timezone).time()
         return time(9, 30) <= local <= time(11, 30)
 
+    def diagnose(self, s: MarketSnapshot, side: str, now: Optional[datetime] = None) -> dict:
+        now = now or datetime.now(self.timezone)
+        oi = s.call_oi_change_pct if side == "CALL" else s.put_oi_change_pct
+        spread = s.call_spread if side == "CALL" else s.put_spread
+        checks = {
+            "entry_window": self.in_entry_window(now),
+            "ltp_above_vwap" if side == "CALL" else "ltp_below_vwap": s.ltp > s.vwap if side == "CALL" else s.ltp < s.vwap,
+            "at_current_session_high" if side == "CALL" else "at_current_session_low": s.ltp >= s.day_high if side == "CALL" else s.ltp <= s.day_low,
+            "oi_change_below_-4pct": oi is not None and oi < -4,
+            "spread_below_1_5": spread is not None and spread < 1.5,
+            "volume_above_1_5x": s.volume_ratio > 1.5,
+            "premium_available": (s.atm_call_premium if side == "CALL" else s.atm_put_premium) is not None,
+        }
+        return {"symbol": s.symbol, "side": side, "timestamp": (s.timestamp or now).isoformat(),
+                "checks": checks, "failed": [k for k, v in checks.items() if not v],
+                "ltp": s.ltp, "vwap": s.vwap, "day_high": s.day_high, "day_low": s.day_low,
+                "volume_ratio": s.volume_ratio, "oi_change_pct": oi, "spread": spread,
+                "premium": s.atm_call_premium if side == "CALL" else s.atm_put_premium}
+
     def candidates(self, snapshots: Iterable[MarketSnapshot], now: Optional[datetime] = None) -> list[Candidate]:
         now = now or datetime.now(self.timezone)
         out: list[Candidate] = []

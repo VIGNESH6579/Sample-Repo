@@ -38,6 +38,22 @@ def status():
     return jsonify(monitor.status())
 
 
+@app.get('/api/diagnose/<symbol>')
+def diagnose_symbol(symbol: str):
+    symbol = symbol.strip().upper()
+    if symbol not in monitor.symbols:
+        return jsonify({"error": "symbol_not_in_universe", "symbol": symbol}), 404
+    snapshots = monitor.provider.snapshots([symbol])
+    if not snapshots:
+        return jsonify({"symbol": symbol, "provider": getattr(monitor.provider, "name", type(monitor.provider).__name__),
+                        "live_row": False, "message": "No complete live stock+option row returned; no signal evaluated."}), 200
+    s = snapshots[0]
+    now = monitor._local_now()
+    return jsonify({"provider": getattr(monitor.provider, "name", type(monitor.provider).__name__),
+                    "live_row": True, "call": monitor.logic.diagnose(s, "CALL", now),
+                    "put": monitor.logic.diagnose(s, "PUT", now)})
+
+
 if __name__ == '__main__':
     threading.Thread(target=monitor.run, daemon=True, name='simple-logic-monitor').start()
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', '10000')))
