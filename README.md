@@ -12,7 +12,7 @@ Exits are generated at option premium +40%, option premium -25%, 45 minutes afte
 
 ## Scheduled notifications
 
-At or after **09:15 IST**, the service sends one day-start notification per date showing the live provider and universe count. At or after **15:40 IST**, it sends one EOD report per date with entry count, entry symbols, exit count, exit reasons, and open positions. The service must be awake around those times; UptimeRobot can keep the public Render endpoint active. If the service starts after a scheduled minute, it sends the report on its first cycle after that time rather than inventing a missed timestamp.
+At or after **09:15 IST**, the service sends one day-start notification per date showing the live provider and universe count. At or after **15:20 IST**, it sends one EOD report per date with entry count, entry symbols, exit count, exit reasons, and open positions. The service must be awake around those times; UptimeRobot can keep the public Render endpoint active. If the service starts after a scheduled minute, it sends the report on its first cycle after that time rather than inventing a missed timestamp.
 
 ## Deployment
 

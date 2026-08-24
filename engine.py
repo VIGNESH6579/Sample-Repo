@@ -87,7 +87,7 @@ class Monitor:
             return
         entries = ', '.join(self.day_stats["entry_symbols"]) or 'None'
         reasons = ', '.join(self.day_stats["exit_reasons"]) or 'None'
-        sent = self._notify("Simple Logic EOD REPORT", f"NSE F&O monitoring ended\nDate: {date_key}\nTime: 15:40 IST\nEntry signals: {self.day_stats['entries']}\nEntry stocks: {entries}\nExits: {self.day_stats['exits']}\nExit reasons: {reasons}\nOpen positions: {len(self.positions)}\nUniverse: {len(self.symbols)} stocks; LTIM excluded", "default", "bar_chart")
+        sent = self._notify("Simple Logic EOD REPORT", f"NSE F&O monitoring ended\nDate: {date_key}\nTime: 15:20 IST\nEntry signals: {self.day_stats['entries']}\nEntry stocks: {entries}\nExits: {self.day_stats['exits']}\nExit reasons: {reasons}\nOpen positions: {len(self.positions)}\nUniverse: {len(self.symbols)} stocks; LTIM excluded", "default", "bar_chart")
         if sent:
             self.eod_sent_date = date_key
 
@@ -104,7 +104,7 @@ class Monitor:
                 self.eod_sent_date = None
             if now.time() >= dt_time(9, 15):
                 self._send_day_start(now)
-            if now.time() >= dt_time(15, 40):
+            if now.time() >= dt_time(15, 20):
                 self._send_eod(now)
             self.latest["last_cycle"] = now.isoformat()
             self.latest["status"] = "market_closed" if not self._in_market_hours(now) else "scanning"
