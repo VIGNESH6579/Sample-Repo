@@ -24,6 +24,8 @@ class MarketSnapshot:
     atm_call_premium: Optional[float] = None
     atm_put_premium: Optional[float] = None
     timestamp: Optional[datetime] = None
+    high_touch_event: Optional[bool] = None
+    low_touch_event: Optional[bool] = None
 
     @property
     def volume_ratio(self) -> float:
@@ -79,7 +81,7 @@ class SimpleLogic:
         checks = {
             "entry_window": self.in_entry_window(now),
             "ltp_above_vwap" if side == "CALL" else "ltp_below_vwap": s.ltp > s.vwap if side == "CALL" else s.ltp < s.vwap,
-            "at_current_session_high" if side == "CALL" else "at_current_session_low": s.ltp >= s.day_high if side == "CALL" else s.ltp <= s.day_low,
+            "at_current_session_high" if side == "CALL" else "at_current_session_low": ((s.high_touch_event if s.high_touch_event is not None else s.ltp >= s.day_high) if side == "CALL" else (s.low_touch_event if s.low_touch_event is not None else s.ltp <= s.day_low)),
             "oi_change_below_-4pct": oi is not None and oi < -4,
             "spread_below_1_5": spread is not None and spread < 1.5,
             "volume_above_1_5x": s.volume_ratio > 1.5,
@@ -100,14 +102,14 @@ class SimpleLogic:
             if self.is_excluded(s.symbol) or s.volume_ratio <= 1.5:
                 continue
             if (
-                s.ltp > s.vwap and s.ltp >= s.day_high and
+                s.ltp > s.vwap and (s.high_touch_event if s.high_touch_event is not None else s.ltp >= s.day_high) and
                 (s.call_oi_change_pct is not None and s.call_oi_change_pct < -4) and
                 (s.call_spread is not None and s.call_spread < 1.5)
             ):
                 out.append(Candidate(s.symbol, "CALL", s.score("CALL"), s.ltp, s.atm_call_premium, now,
                                      ["LTP > VWAP", "LTP >= current-session Day High", "Call OI change < -4%", "Call spread < 1.5", "Volume > 1.5x average"]))
             if (
-                s.ltp < s.vwap and s.ltp <= s.day_low and
+                s.ltp < s.vwap and (s.low_touch_event if s.low_touch_event is not None else s.ltp <= s.day_low) and
                 (s.put_oi_change_pct is not None and s.put_oi_change_pct < -4) and
                 (s.put_spread is not None and s.put_spread < 1.5)
             ):

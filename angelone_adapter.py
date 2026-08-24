@@ -44,6 +44,8 @@ class AngelOneProvider:
         self.previous_oi: dict[str, float] = {}
         self.session_oi: dict[str, float] = {}
         self.session_oi_date: str | None = None
+        self.session_extrema: dict[str, tuple[float, float]] = {}
+        self.session_extrema_date: str | None = None
         self.volume_baseline: dict[str, float] = {}
         self.volume_baseline_date: str | None = None
         self.ready = False
@@ -216,6 +218,9 @@ class AngelOneProvider:
         if self.session_oi_date != today_key:
             self.session_oi.clear()
             self.session_oi_date = today_key
+        if self.session_extrema_date != today_key:
+            self.session_extrema.clear()
+            self.session_extrema_date = today_key
         equities = {s: self.equity_by_name.get(s) for s in symbols}
         equities = {s: row for s, row in equities.items() if row}
         eq_quotes = self._quotes("NSE", [str(row["token"]) for row in equities.values()])
@@ -239,6 +244,15 @@ class AngelOneProvider:
                 continue
             spot = self._num(eq.get("ltp")); high = self._num(eq.get("high")); low = self._num(eq.get("low"))
             vwap = self._num(eq.get("avgPrice")); volume = self._num(eq.get("tradeVolume"))
+            previous_extrema = self.session_extrema.get(symbol)
+            high_touch_event = bool(previous_extrema and high > previous_extrema[0]) if high is not None else False
+            low_touch_event = bool(previous_extrema and low < previous_extrema[1]) if low is not None else False
+            if spot is not None and high is not None and spot >= high:
+                high_touch_event = True
+            if spot is not None and low is not None and spot <= low:
+                low_touch_event = True
+            if high is not None and low is not None:
+                self.session_extrema[symbol] = (high, low)
             average = volume_baselines.get(symbol)
             if None in (spot, high, low, vwap, volume, average):
                 continue
@@ -258,7 +272,8 @@ class AngelOneProvider:
                 volume=volume, average_volume=average, call_oi_change_pct=call_change,
                 put_oi_change_pct=put_change, call_spread=self._spread(cq or {}),
                 put_spread=self._spread(pq or {}), atm_call_premium=self._num((cq or {}).get("ltp")),
-                atm_put_premium=self._num((pq or {}).get("ltp")), timestamp=fetched_at))
+                atm_put_premium=self._num((pq or {}).get("ltp")), timestamp=fetched_at,
+                high_touch_event=high_touch_event, low_touch_event=low_touch_event))
         self.last_data_at = fetched_at.isoformat()
         return out
 

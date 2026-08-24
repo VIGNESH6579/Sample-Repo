@@ -22,6 +22,10 @@ def main():
     assert {x.side for x in result} == {'CALL', 'PUT'}
     result = logic.candidates([snap('LTIM', 'CALL'), snap('RELIANCE', 'CALL'), snap('INFY', 'CALL')], NOW)
     assert {item.symbol for item in result} == {'RELIANCE', 'INFY'}
+    event_snap = snap('SBILIFE', 'PUT')
+    event_snap.low_touch_event = True
+    event_snap.put_oi_change_pct = -5
+    assert logic.candidates([event_snap], NOW)[0].side == 'PUT'
     position = Position('RELIANCE', 'CALL', 10, 101, NOW)
     assert logic.should_exit(position, 14, 101, 100, 90, NOW)[0]
     assert logic.should_exit(position, 7.4, 101, 100, 90, NOW)[0]
