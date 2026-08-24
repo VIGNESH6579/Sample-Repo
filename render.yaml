@@ -15,3 +15,11 @@ services:
         sync: false
       - key: TRADINGVIEW_SCANNER_URL
         value: https://scanner.tradingview.com/india/scan
+      - key: ANGEL_API_KEY
+        sync: false
+      - key: ANGEL_CLIENT_ID
+        sync: false
+      - key: ANGEL_PASSWORD
+        sync: false
+      - key: ANGEL_TOTP_SECRET
+        sync: false

@@ -10,6 +10,7 @@ import requests
 
 from simple_logic import Position, SimpleLogic
 from tradingview_adapter import TradingViewScanner
+from angelone_adapter import AngelOneProvider, angel_one_configured
 from universe import load_universe
 
 log = logging.getLogger("simple_logic")
@@ -19,9 +20,10 @@ IST = ZoneInfo("Asia/Kolkata")
 class Monitor:
     def __init__(self):
         self.logic = SimpleLogic()
-        self.provider = TradingViewScanner()
+        self.provider = AngelOneProvider() if angel_one_configured() else TradingViewScanner()
         self.lock = threading.Lock()
         self.latest = {"status": "starting", "last_cycle": None, "candidate": [], "position": [], "message": None, "live_rows": 0}
+        self.provider_status = self.provider.status() if hasattr(self.provider, "status") else {"provider": type(self.provider).__name__}
         self.positions: dict[str, Position] = {}
         self.trade_date: str | None = None
         self.start_sent_date: str | None = None
@@ -55,7 +57,8 @@ class Monitor:
             return
         self.start_sent_date = date_key
         self.day_stats = {"entries": 0, "exits": 0, "entry_symbols": [], "exit_reasons": []}
-        self._notify("Simple Logic DAY START", f"NSE F&O monitoring started\nDate: {date_key}\nTime: 09:15 IST\nStocks loaded: {len(self.symbols)}\nExcluded: LTIMindtree\nProvider: TradingView live scanner", "default", "sunrise,chart_with_upwards_trend")
+        provider_name = getattr(self.provider, "name", "TradingView live scanner")
+        self._notify("Simple Logic DAY START", f"NSE F&O monitoring started\nDate: {date_key}\nTime: 09:15 IST\nStocks loaded: {len(self.symbols)}\nExcluded: LTIMindtree\nProvider: {provider_name}", "default", "sunrise,chart_with_upwards_trend")
 
     def _send_eod(self, now: datetime):
         date_key = now.date().isoformat()
@@ -90,6 +93,8 @@ class Monitor:
         by_key = {f"{s.symbol}:{side}": s for s in snapshots for side in ("CALL", "PUT")}
         with self.lock:
             self.latest["live_rows"] = len(snapshots)
+            if hasattr(self.provider, "status"):
+                self.provider_status = self.provider.status()
             for key, position in list(self.positions.items()):
                 current = by_key.get(key)
                 if not current:
@@ -134,7 +139,8 @@ class Monitor:
             data = dict(self.latest)
             data["symbols"] = len(self.symbols)
             data["excluded"] = ["LTIM", "LTIMindtree"]
-            data["provider"] = "TradingView live scanner"
+            data["provider"] = getattr(self.provider, "name", "TradingView live scanner")
+            data["provider_status"] = dict(self.provider_status)
             data["trade_date"] = self.trade_date
             data["start_sent_date"] = self.start_sent_date
             data["eod_sent_date"] = self.eod_sent_date
