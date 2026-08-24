@@ -6,7 +6,7 @@ Simple Logic is an alert-only NSE F&O option scalp monitor. It uses the supplied
 
 The service polls TradingView during market hours and rejects incomplete rows instead of substituting hard-coded prices. It reads each stock’s live LTP, VWAP, current session high and low, volume, and average volume. The current session high and low are evaluated per stock, not shared across the universe. The option OI, spread, and ATM-premium fields must also be present in the configured live feed before a signal can be produced.
 
-The entry window is 09:30–11:30 IST. A CALL candidate requires LTP above VWAP and the stock’s current day high, call OI change below -4%, call spread below 1.5, and volume above 1.5 times average volume. A PUT candidate uses the mirrored conditions below VWAP and the stock’s current day low. Every qualifying stock can generate a signal; there is no one-signal-per-day limit. Duplicate unchanged setups are suppressed while the same symbol-side position is active.
+The entry window is 09:30–11:30 IST. A CALL candidate requires LTP above VWAP and at or above the stock’s current-session high, call OI change below -4%, call spread below 1.5, and volume above 1.5 times average volume. A PUT candidate uses the mirrored conditions below VWAP and at or below the stock’s current-session low. Every qualifying stock can generate a signal; there is no one-signal-per-day limit. Duplicate unchanged setups are suppressed while the same symbol-side position is active.
 
 Exits are generated at option premium +40%, option premium -25%, 45 minutes after entry, or when the underlying breaks the relevant stock-specific day-high/day-low confirmation.
 
